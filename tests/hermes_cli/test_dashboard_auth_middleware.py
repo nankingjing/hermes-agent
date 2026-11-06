@@ -285,6 +285,36 @@ def test_webapp_sign_out_from_another_origin_is_refused(proxied_gated_webapp):
     assert out.status_code == 403, out.text
 
 
+def test_webapp_cookie_write_survives_a_proxy_that_strips_origin(proxied_gated_webapp):
+    """A TLS-terminating proxy (home router, CDN, ingress) forwards to the backend and drops
+    ``Origin`` on the way, so the server never sees the header the origin check wants. The
+    browser's own ``Sec-Fetch-Site`` verdict survives that hop and still names the origin the
+    browser addressed, so the write must be admitted: refusing it makes every cookie
+    write 403 behind such a proxy, and no ``public_url`` setting can take effect on a
+    header that never arrives.
+
+    Only the browser's own ``same-origin`` verdict is admitted here. A page the browser marks
+    as another page's (``cross-site``, ``same-site``) stays refused, and a request with no
+    Fetch Metadata at all keeps main's native-client allowance.
+    """
+    _complete_stub_login(proxied_gated_webapp)
+
+    # The proxy stripped Origin; the browser still says it addressed this very origin.
+    own_page = proxied_gated_webapp.post("/api/auth/ws-ticket", headers={
+        "Sec-Fetch-Site": "same-origin"})
+    assert own_page.status_code == 200, own_page.text
+
+    # A page the browser says belongs to someone else stays refused, Origin or not.
+    for fetch_site in ("cross-site", "same-site"):
+        forged = proxied_gated_webapp.post("/api/auth/ws-ticket", headers={
+            "Sec-Fetch-Site": fetch_site})
+        assert forged.status_code == 403, (fetch_site, forged.text)
+
+    # A native client that sends no Fetch Metadata at all still writes (main's rule).
+    native = proxied_gated_webapp.post("/api/auth/ws-ticket")
+    assert native.status_code == 200, native.text
+
+
 def test_dashboard_page_writes_behind_a_host_rewriting_http_proxy_are_admitted_as_on_main(
         proxied_gated_dashboard):
     """With the Webapp off, the gated ``hermes dashboard`` keeps main's rule for cookie writes: the

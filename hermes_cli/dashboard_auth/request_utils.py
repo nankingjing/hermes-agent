@@ -68,6 +68,14 @@ def cookie_origin_is_allowed(request: Request) -> bool:
     comparing Origin with the OAuth public-URL authority, otherwise the request's
     Host and ASGI scheme (uvicorn applies *trusted* proxy headers). Never trust
     raw forwarded headers here or reuse WS's opaque/non-HTTP Origin exemption.
+
+    The browser's ``Sec-Fetch-Site`` verdict decides in the no-Origin branch too,
+    and the same trust it already gets above applies: a page always attaches
+    Origin to a write, so a write with no Origin *and* a ``same-origin`` verdict
+    is a shape only a proxy that strips Origin on forward produces (a
+    TLS-terminating home router, a CDN, an ingress). Such a proxy leaves the
+    browser's own verdict intact, and a cross-site page would have been reported
+    as ``cross-site``/``same-site``, both of which stay refused here.
     """
     from hermes_cli.dashboard_auth.prefix import resolve_public_url
     from hermes_cli.web_server import _is_accepted_host
@@ -83,7 +91,10 @@ def cookie_origin_is_allowed(request: Request) -> bool:
     if not origins:
         # Electron's net.request sends Sec-Fetch-Site: none to https and loopback, and no Fetch
         # Metadata to plain http. Pages attach Origin to every non-GET and keep none for typed GETs.
-        return fetch_sites in ([], ["none"])
+        # A proxy that strips Origin on forward (TLS-terminating router, CDN, ingress) leaves the
+        # browser's own verdict behind: same-origin still means the browser addressed this very
+        # origin, and cross-site/same-site stay refused.
+        return fetch_sites in ([], ["none"], ["same-origin"])
     origin = _http_origin(origins[0]) if len(origins) == 1 else None
     if origin is None:
         return False
