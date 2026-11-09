@@ -246,3 +246,46 @@ def test_provider_exception_does_not_raise():
         json.dumps({"success": True}),
         {"action": "create", "name": "my-skill", "content": _SKILL_MD},
     )
+
+
+# ---------------------------------------------------------------------------
+# Egress scrub + caller-profile gate
+#
+# Providers archive whatever they are handed (#115104), so the skill-write mirror
+# must go through the same ``_redact_for_provider`` scrub — and the same
+# ``_owner_allows`` caller-profile gate — as every other manager fan-out.
+# ``on_memory_write`` has both; a new hook that skips them reopens the leak.
+# ---------------------------------------------------------------------------
+
+def test_content_is_redacted_before_it_reaches_the_provider(monkeypatch):
+    import agent.memory_manager as memory_manager
+
+    seen = []
+
+    def _fake_redact(*values):
+        seen.append(values)
+        return tuple(f"[masked]{value}" if isinstance(value, str) else value
+                     for value in values)
+
+    monkeypatch.setattr(memory_manager, "_redact_for_provider", _fake_redact)
+    mgr, provider = _manager_with_provider()
+    mgr.notify_skill_tool_write(
+        json.dumps({"success": True}),
+        {"action": "create", "name": "my-skill", "content": _SKILL_MD},
+    )
+
+    assert seen, "on_skill_write reached the provider without the egress scrub"
+    assert provider.calls
+    assert provider.calls[0]["content"] == f"[masked]{_SKILL_MD}"
+
+
+def test_hook_is_refused_when_the_caller_profile_does_not_allow_it(monkeypatch):
+    mgr, provider = _manager_with_provider()
+    monkeypatch.setattr(mgr, "_owner_allows", lambda hook: False)
+
+    mgr.notify_skill_tool_write(
+        json.dumps({"success": True}),
+        {"action": "create", "name": "my-skill", "content": _SKILL_MD},
+    )
+
+    assert provider.calls == []

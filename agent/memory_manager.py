@@ -768,6 +768,9 @@ class MemoryManager:
     def on_skill_write(self, action: str, name: str, content: str,
                        metadata: Optional[dict[str, Any]] = None) -> None:
         """Notify external providers when the built-in skill_manage tool writes (skips builtin)."""
+        if not self._owner_allows("on_skill_write"):
+            return
+        content, metadata = _redact_for_provider(content, dict(metadata or {}))
 
         def _notify(provider: MemoryProvider) -> None:
             provider.on_skill_write(action, name, content, metadata=dict(metadata or {}))
