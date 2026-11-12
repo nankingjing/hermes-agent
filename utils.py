@@ -538,8 +538,31 @@ def _roundtrip_load(path: Path):
     return yaml_rt, data if isinstance(data, CommentedMap) else CommentedMap(data or {})
 
 
+def _settle_empty_sections(node) -> None:
+    """Leave an emptied section as a plain empty mapping, not a comment-carrying one.
+
+    ruamel writes an empty ``CommentedMap`` as a bare ``{}`` at column 0 once the comments
+    inside it are preserved, which is not valid YAML: emptying ``skills`` leaves ``skills:``,
+    its comment lines, then a column-0 ``{}`` that the next parse rejects (#154436). A plain
+    empty dict is written indented under the key, so the section stays a valid empty mapping.
+    """
+    from ruamel.yaml.comments import CommentedMap
+
+    if isinstance(node, CommentedMap):
+        for key in list(node):
+            _settle_empty_sections(node[key])
+        for key in list(node):
+            child = node[key]
+            if isinstance(child, CommentedMap) and not child:
+                node[key] = {}
+    elif isinstance(node, list):
+        for item in node:
+            _settle_empty_sections(item)
+
+
 def _roundtrip_dump(path: Path, yaml_rt, config, *, extra_content: str | None = None) -> None:
     def _write(f) -> None:
+        _settle_empty_sections(config)
         yaml_rt.dump(config, f)
         if extra_content:
             f.write(extra_content)
